@@ -1,0 +1,548 @@
+
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🌸 Sakura Alert</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+
+<style>
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: #050508;
+  color: white;
+  font-family: Arial, sans-serif;
+}
+
+#map {
+  position: fixed;
+  inset: 0;
+  background: #050508;
+}
+
+#intro {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  overflow: hidden;
+  background: radial-gradient(circle, #51203f, #17101f 55%, #050508);
+}
+
+.intro-content {
+  z-index: 2;
+  padding: 20px;
+}
+
+.logo {
+  font-size: clamp(35px, 8vw, 70px);
+  font-weight: 900;
+  color: #ff9ed8;
+  text-shadow: 0 0 15px #ff4db8, 0 0 35px #ff4db8;
+}
+
+.subtitle {
+  margin: 18px 0 28px;
+  color: #e9cbe0;
+}
+
+button {
+  border: 1px solid #ff9ed8;
+  border-radius: 13px;
+  padding: 14px 32px;
+  color: white;
+  background: linear-gradient(135deg, #ff4db8, #873eff);
+  font-size: 17px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.petal {
+  position: absolute;
+  top: -30px;
+  animation: fall linear infinite;
+  pointer-events: none;
+}
+
+@keyframes fall {
+  to { transform: translateY(110vh) rotate(500deg); }
+}
+
+#panel {
+  position: fixed;
+  z-index: 1000;
+  top: 12px;
+  left: 12px;
+  width: min(320px, calc(100vw - 24px));
+  padding: 14px;
+  border: 1px solid #ff76c9;
+  border-radius: 15px;
+  background: rgba(9, 8, 17, .94);
+  box-shadow: 0 0 25px #ff4db822;
+  backdrop-filter: blur(10px);
+}
+
+#panel h2 {
+  color: #ff9ed8;
+  font-size: 21px;
+  margin: 0 0 10px;
+}
+
+#status {
+  font-weight: bold;
+  margin: 9px 0;
+}
+
+.green-text { color: #48ff8b; }
+.yellow-text { color: #ffe45c; }
+.red-text { color: #ff5967; }
+.gray-text { color: #d0ced9; }
+
+#detail, #mapStatus {
+  font-size: 12px;
+  color: #d0ced9;
+  line-height: 1.5;
+}
+
+.legend {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  font-size: 12px;
+  color: #eee;
+}
+
+.dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 4px;
+}
+
+.dot-green { background: #36ff79; }
+.dot-yellow { background: #ffe34d; }
+.dot-red { background: #ff394d; }
+
+#source {
+  position: fixed;
+  z-index: 1000;
+  bottom: 8px;
+  left: 8px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: #08080de8;
+  font-size: 11px;
+}
+
+#source a { color: #ff9ed8; }
+
+.threat-marker {
+  width: 18px;
+  height: 18px;
+  border: 2px solid white;
+  border-radius: 50%;
+  background: #ff263f;
+  box-shadow: 0 0 12px #ff263f, 0 0 25px #ff263f;
+  animation: pulse 1s infinite alternate;
+}
+
+@keyframes pulse {
+  to { transform: scale(1.25); }
+}
+</style>
+</head>
+
+<body>
+
+<div id="intro">
+  <div class="intro-content">
+    <div class="logo">🌸 SAKURA ALERT</div>
+    <div class="subtitle">Карта повітряних тривог · Львівщина</div>
+    <button id="startBtn">Почати</button>
+  </div>
+</div>
+
+<div id="map"></div>
+
+<div id="panel" hidden>
+  <h2>🌸 Sakura Alert</h2>
+  <div id="status" class="gray-text">Завантаження...</div>
+  <div id="detail"></div>
+
+  <div class="legend">
+    <span><i class="dot dot-green"></i>Відбій</span>
+    <span><i class="dot dot-yellow"></i>Тривога</span>
+    <span><i class="dot dot-red"></i>Загроза</span>
+  </div>
+
+  <p id="mapStatus">Завантаження карти...</p>
+</div>
+
+<div id="source">
+  Дані: <a href="https://neptun.in.ua/" target="_blank" rel="noopener">NEPTUN</a>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@turf/turf@6.5.0/turf.min.js"></script>
+
+<script>
+const map = L.map("map", {
+  zoomControl: true,
+  attributionControl: true
+}).setView([49.84, 24.03], 8);
+
+// Супутникова карта
+L.tileLayer(
+  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+  {
+    maxZoom: 19,
+    attribution: "Tiles © Esri"
+  }
+).addTo(map);
+
+// Підписи населених пунктів
+L.tileLayer(
+  "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
+  {
+    maxZoom: 19,
+    attribution: "Labels © Esri"
+  }
+).addTo(map);
+
+const statusEl = document.getElementById("status");
+const detailEl = document.getElementById("detail");
+const mapStatusEl = document.getElementById("mapStatus");
+
+let lviv = null;
+let boundary = null;
+let alertLayer = L.layerGroup().addTo(map);
+let threatLayer = L.layerGroup().addTo(map);
+
+let lastAlerts = {
+  raions: [],
+  oblasts: []
+};
+
+let lastThreats = [];
+
+function setStatus(text, color, detail) {
+  statusEl.textContent = text;
+  statusEl.className = color;
+  detailEl.textContent = detail || "";
+}
+
+function addPetals() {
+  const intro = document.getElementById("intro");
+
+  for (let i = 0; i < 22; i++) {
+    const p = document.createElement("span");
+    p.className = "petal";
+    p.textContent = "🌸";
+    p.style.left = Math.random() * 100 + "%";
+    p.style.animationDuration = (6 + Math.random() * 8) + "s";
+    p.style.animationDelay = (-Math.random() * 10) + "s";
+    p.style.fontSize = (12 + Math.random() * 14) + "px";
+    intro.appendChild(p);
+  }
+}
+
+addPetals();
+
+document.getElementById("startBtn").onclick = () => {
+  document.getElementById("intro").style.display = "none";
+  document.getElementById("panel").hidden = false;
+  setTimeout(() => map.invalidateSize(), 200);
+};
+
+async function getJSON(url) {
+  const response = await fetch(url, { cache: "no-store" });
+
+  if (!response.ok) {
+    throw new Error("HTTP " + response.status);
+  }
+
+  return response.json();
+}
+
+function asFeature(data) {
+  if (data.type === "Feature") return data;
+
+  if (data.type === "FeatureCollection" && data.features?.length) {
+    return data.features[0];
+  }
+
+  throw new Error("Неправильний формат GeoJSON");
+}
+
+async function loadMap() {
+  mapStatusEl.textContent = "Завантажуємо межу Львівщини...";
+
+  const geo = await getJSON(
+    "https://raw.githubusercontent.com/EugeneBorshch/ukraine_geojson/master/UA_46_Lvivska.geojson"
+  );
+
+  lviv = asFeature(geo);
+
+  if (!lviv.geometry) {
+    throw new Error("У файлі немає геометрії області");
+  }
+
+  // Маска: все поза Львівщиною чорне
+  const world = turf.polygon([[
+    [-180, -85],
+    [180, -85],
+    [180, 85],
+    [-180, 85],
+    [-180, -85]
+  ]]);
+
+  const outside = turf.difference(world, lviv);
+
+  if (outside) {
+    L.geoJSON(outside, {
+      style: {
+        stroke: false,
+        fillColor: "#000000",
+        fillOpacity: 1
+      },
+      interactive: false
+    }).addTo(map);
+  }
+
+  // Контур Львівщини та зелене підсвічування при відбої
+  boundary = L.geoJSON(lviv, {
+    style: {
+      color: "#ff54c8",
+      weight: 4,
+      opacity: 1,
+      fillColor: "#27ff85",
+      fillOpacity: 0.18
+    },
+    interactive: false
+  }).addTo(map);
+
+  map.fitBounds(boundary.getBounds(), {
+    padding: [20, 20]
+  });
+
+  mapStatusEl.textContent = "Карту завантажено";
+
+  redrawAlerts();
+  drawThreats(lastThreats);
+}
+
+function isLviv(text) {
+  return /львівськ|lvivska|lviv/i.test(String(text || ""));
+}
+
+function getKey(item) {
+  return String(item.key || "").toLowerCase();
+}
+
+function isLvivAlert(item) {
+  return isLviv(item.name) ||
+         isLviv(item.oblast) ||
+         getKey(item).includes("lviv");
+}
+
+function redrawAlerts() {
+  if (!lviv) return;
+
+  alertLayer.clearLayers();
+
+  const oblastAlert = (lastAlerts.oblasts || [])
+    .some(isLvivAlert);
+
+  const raionAlerts = (lastAlerts.raions || [])
+    .filter(item => isLviv(item.oblast) ||
+                    getKey(item).startsWith("lvivska:"));
+
+  if (oblastAlert) {
+    L.geoJSON(lviv, {
+      style: {
+        color: "#ff334b",
+        weight: 4,
+        fillColor: "#ff263f",
+        fillOpacity: 0.4
+      },
+      interactive: false
+    }).addTo(alertLayer);
+
+    setStatus(
+      "🔴 ТРИВОГА В ОБЛАСТІ",
+      "red-text",
+      " "
+    );
+  } else if (raionAlerts.length) {
+    setStatus(
+      "🟡 ТРИВОГА В РАЙОНІ",
+      "yellow-text",
+      " "
+    );
+  } else {
+    setStatus(
+      "🟢 ВІДБІЙ",
+      "green-text",
+      ""
+    );
+  }
+}
+
+function isInsideLviv(threat) {
+  if (!lviv) return false;
+
+  if (typeof threat.lat !== "number" ||
+      typeof threat.lon !== "number") {
+    return isLviv(threat.region);
+  }
+
+  try {
+    return turf.booleanPointInPolygon(
+      turf.point([threat.lon, threat.lat]),
+      lviv
+    );
+  } catch (e) {
+    return false;
+  }
+}
+
+function escapeHTML(value) {
+  return String(value).replace(/[&<>"']/g, c => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;"
+  }[c]));
+}
+
+function drawThreats(threats) {
+  lastThreats = Array.isArray(threats) ? threats : [];
+
+  if (!lviv) return;
+
+  threatLayer.clearLayers();
+
+  const active = lastThreats.filter(t =>
+    t.status !== "resolved" &&
+    t.status !== "stale" &&
+    !t.advisory &&
+    isInsideLviv(t)
+  );
+
+  active.forEach(t => {
+    if (t.areaOnly ||
+        typeof t.lat !== "number" ||
+        typeof t.lon !== "number") {
+      return;
+    }
+
+    const icon = L.divIcon({
+      className: "",
+      html: '<div class="threat-marker"></div>',
+      iconSize: [20, 20],
+      iconAnchor: [10, 10]
+    });
+
+    const marker = L.marker([t.lat, t.lon], { icon });
+
+    const title = escapeHTML(t.title || "Повітряна загроза");
+    const place = escapeHTML(
+      t.locality || t.district || t.region || "Місце не уточнено"
+    );
+
+    marker.bindPopup("<b>" + title + "</b><br>" + place);
+    marker.addTo(threatLayer);
+
+    L.circle([t.lat, t.lon], {
+      radius: 3000,
+      color: "#ff334b",
+      weight: 2,
+      fillColor: "#ff263f",
+      fillOpacity: 0.14,
+      interactive: false
+    }).addTo(threatLayer);
+  });
+
+  const exactThreat = active.some(t =>
+    !t.areaOnly &&
+    typeof t.lat === "number" &&
+    typeof t.lon === "number"
+  );
+
+  if (exactThreat) {
+    setStatus(
+      "🔴 Є ПОВІТРЯНА ЗАГРОЗА",
+      "red-text",
+      ""
+    );
+  }
+}
+
+async function updateData() {
+  try {
+    const data = await getJSON(
+      "https://neptun.in.ua/api/v1/alerts"
+    );
+
+    lastAlerts = {
+      raions: data.raions || [],
+      oblasts: data.oblasts || []
+    };
+
+    redrawAlerts();
+    mapStatusEl.textContent = "Статус тривог оновлено";
+  } catch (error) {
+    console.error("Помилка API тривог:", error);
+    mapStatusEl.textContent = "Дані тривог тимчасово недоступні.";
+  }
+
+  try {
+    const data = await getJSON(
+      "https://neptun.in.ua/api/v1/threats"
+    );
+
+    drawThreats(data.threats || []);
+  } catch (error) {
+    console.error("Помилка API загроз:", error);
+  }
+}
+
+async function start() {
+  try {
+    await loadMap();
+  } catch (error) {
+    console.error("Помилка завантаження меж:", error);
+
+    mapStatusEl.textContent =
+      "Не вдалося завантажити межі області. Перевір F12 → Console.";
+
+    setStatus(
+      "⚪ ПОМИЛКА КАРТИ",
+      "gray-text",
+      ""
+    );
+
+    return;
+  }
+
+  await updateData();
+
+  // Оновлення кожні 10 секунд
+  setInterval(updateData, 10000);
+}
+
+start();
+</script>
+
+</body>
+</html>
